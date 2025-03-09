@@ -8,7 +8,7 @@ Edit the ```nbs.py``` file, and amend the following variables -
 
 ```
 NETDISCO_URL = "http://{netdisco-host}:5000"
-NETDISCO_USERNAME = "{netdiso username}"
+NETDISCO_USERNAME = "{netdisco username}"
 NETDISCO_PASSWORD = "{netdisco password}"
 ```
 
