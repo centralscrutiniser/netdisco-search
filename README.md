@@ -7,7 +7,7 @@ You can run this application on the NetDisco host itself, or on a remote host.
 Edit the ```nbs.py``` file, and amend the following variables -
 
 ```
-NETDISCO_URL = "http://{netdiso-host}:5000"
+NETDISCO_URL = "http://{netdisco-host}:5000"
 NETDISCO_USERNAME = "{netdiso username}"
 NETDISCO_PASSWORD = "{netdisco password}"
 ```
