@@ -45,10 +45,18 @@ You can, of course, run this behind an Nginx or Apache reverse proxy if you wish
 ## Operation
 Once running, the UI presents a simple lookup form to lookup IP Addresses
 
-<img width="1324" alt="IP" src="https://github.com/user-attachments/assets/f769fb7b-08ee-4d47-9288-c067e2565ef6" />
+<img width="1283" height="594" alt="Screenshot 2025-07-23 at 18 37 13" src="https://github.com/user-attachments/assets/272c7af3-9ace-40b7-a121-eabcc548485a" />
 
 And MAC Addresses
 
-<img width="1318" alt="MAC" src="https://github.com/user-attachments/assets/c17fda4a-e709-465d-9219-94f01a9a939e" />
+<img width="1285" height="596" alt="Screenshot 2025-07-23 at 18 38 39" src="https://github.com/user-attachments/assets/795782ef-9eb3-4976-9bd6-d21c21dcac5c" />
+
+As NetDisco will also allow you to search an entire subnet, this is also supported. 
+
+<img width="1318" height="955" alt="Screenshot 2025-07-23 at 18 36 49" src="https://github.com/user-attachments/assets/e62943fd-8379-4767-85a3-c8c00c79d91f" />
+
+The output can be exported to CSV at the click of a button. 
+
+
 
 
