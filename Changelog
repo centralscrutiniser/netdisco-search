@@ -1,0 +1,7 @@
+# V1.0
++ Initial release
+# V1.1
++ Added subnet lookup
++ Added port description data
++ Added CSV export function
+- Removed First Seen column and data from output
