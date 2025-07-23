@@ -1,132 +1,158 @@
-from flask import Flask, render_template, request, jsonify
-import requests
-import json
+from flask import Flask, render_template, request, Response
+import requests, json, csv, io, ipaddress
+from urllib.parse import quote
 
 app = Flask(__name__)
 
-# NetDisco credentials and base URL
-NETDISCO_URL = "http://{netdiso-host}:5000"
-NETDISCO_USERNAME = "{netdiso username}"
+NETDISCO_URL = "http://{netdisco-host}:5000"
+NETDISCO_USERNAME = "{netdisco username}"
 NETDISCO_PASSWORD = "{netdisco password}"
 
-# Function to authenticate and get API key
 def get_api_key():
-    login_url = f"{NETDISCO_URL}/login"
-    auth_response = requests.post(
-        login_url,
+    r = requests.post(
+        f"{NETDISCO_URL}/login",
         auth=(NETDISCO_USERNAME, NETDISCO_PASSWORD),
-        headers={'Accept': 'application/json'}
+        headers={'Accept':'application/json'}
+    )
+    if r.status_code == 200:
+        return r.json().get('api_key')
+    return None
+
+def query_netdisco(address, api_key):
+    r = requests.get(
+        f"{NETDISCO_URL}/api/v1/search/node",
+        headers={'Authorization': api_key, 'Accept':'application/json'},
+        params={'q': address}
+    )
+    return r.json() if r.status_code == 200 else None
+
+def query_port_description(switch_ip, port, api_key):
+    port_enc = quote(port, safe='')
+    r = requests.get(
+        f"{NETDISCO_URL}/api/v1/object/device/{switch_ip}/port/{port_enc}",
+        headers={'Authorization': api_key, 'Accept':'application/json'}
+    )
+    if r.status_code == 200:
+        return r.json().get('name')
+    return None
+
+def build_results(address, api_key):
+    data = query_netdisco(address, api_key)
+    if not data:
+        return None
+
+    rows = []
+
+    # MAC‐lookup branch
+    if 'ips' in data and data['ips']:
+        for device in data['ips']:
+            mac       = device.get('mac')
+            ip        = device.get('ip')
+            entry = {
+                'ip'               : ip or 'N/A',
+                'mac'              : mac or 'N/A',
+                'manufacturer'     : device.get('manufacturer',{}).get('company','Unknown'),
+                'time_last'        : device.get('time_last','N/A'),
+                'device_name'      : 'N/A',
+                'port'             : 'N/A',
+                'port_description' : 'N/A'
+            }
+
+            # sightings come in the same payload
+            if 'sightings' in data and data['sightings']:
+                s = data['sightings'][0]
+                entry['device_name'] = s.get('device',{}).get('name','N/A')\
+                                            .replace('.uwe.ac.uk','')
+                entry['port']        = s.get('port','N/A')
+                switch_ip            = s.get('switch')
+                if switch_ip and entry['port']!='N/A':
+                    desc = query_port_description(switch_ip, entry['port'], api_key)
+                    entry['port_description'] = desc or 'N/A'
+
+            rows.append(entry)
+
+    # IP‐lookup (and subnet) branch
+    elif 'macs' in data and data['macs']:
+        for device in data['macs']:
+            mac = device.get('mac')
+            entry = {
+                'ip'               : device.get('ip','N/A'),
+                'mac'              : mac or 'N/A',
+                'manufacturer'     : device.get('manufacturer',{}).get('company','Unknown'),
+                'time_last'        : device.get('time_last','N/A'),
+                'device_name'      : 'N/A',
+                'port'             : 'N/A',
+                'port_description' : 'N/A'
+            }
+
+            # second query for sightings
+            sdata = query_netdisco(mac, api_key)
+            switch_ip = None
+            if sdata and 'sightings' in sdata:
+                for s in sdata['sightings']:
+                    if s.get('mac') == mac:
+                        entry['device_name'] = s.get('device',{})\
+                                               .get('name','N/A')\
+                                               .replace('.uwe.ac.uk','')
+                        entry['port']        = s.get('port','N/A')
+                        switch_ip            = s.get('switch')
+                        break
+
+            if switch_ip and entry['port']!='N/A':
+                desc = query_port_description(switch_ip, entry['port'], api_key)
+                entry['port_description'] = desc or 'N/A'
+
+            rows.append(entry)
+
+    else:
+        return None
+
+    # sort by numeric IP
+    rows.sort(key=lambda x: ipaddress.IPv4Address(x['ip']))
+    return rows
+
+@app.route('/', methods=['GET','POST'])
+def index():
+    if request.method=='POST':
+        address = request.form['address']
+        api_key  = get_api_key()
+        if not api_key:
+            return render_template('index.html', error="Auth failed")
+
+        rows = build_results(address, api_key)
+        if not rows:
+            return render_template('index.html', error=f"No data for {address}")
+
+        return render_template('index.html', address=address, result=rows)
+
+    return render_template('index.html')
+
+@app.route('/export')
+def export():
+    address = request.args.get('address')
+    api_key  = get_api_key()
+    rows = build_results(address, api_key)
+    if not rows:
+        return ("No data to export", 404)
+
+    si = io.StringIO()
+    cw = csv.writer(si)
+    cw.writerow([
+        "IP Address","MAC Address","Manufacturer",
+        "Last Seen","Device Name","Port Description","Switch Port"
+    ])
+    for e in rows:
+        cw.writerow([
+            e['ip'], e['mac'], e['manufacturer'],
+            e['time_last'], e['device_name'],
+            e['port_description'], e['port']
+        ])
+
+    return Response(
+        si.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition':f'attachment;filename=netdisco_{address.replace("/","_")}.csv'}
     )
 
-    if auth_response.status_code == 200:
-        try:
-            return auth_response.json().get('api_key')
-        except KeyError:
-            print("API key not found in response.")
-            return None
-    else:
-        print("Authentication Failed:", auth_response.text)
-        return None
-
-# Function to query NetDisco by IP address or MAC address
-def query_netdisco(address, api_key):
-    # Using the /api/v1/search/node endpoint for both IP and MAC address queries
-    query_url = f"{NETDISCO_URL}/api/v1/search/node"
-    
-    headers = {'Authorization': f"{api_key}", 'Accept': 'application/json'}
-    payload = {'q': address}
-    
-    response = requests.get(query_url, headers=headers, params=payload)
-    
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"Query Failed: {response.text}")
-        return None
-
-# Function to query NetDisco for MAC address and get the port information
-def query_mac_port(mac_address, api_key):
-    query_url = f"{NETDISCO_URL}/api/v1/search/node"
-    
-    headers = {'Authorization': f"{api_key}", 'Accept': 'application/json'}
-    payload = {'q': mac_address}
-    
-    response = requests.get(query_url, headers=headers, params=payload)
-    
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"Query Failed for MAC: {response.text}")
-        return None
-
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST':
-        address = request.form['address']
-        
-        api_key = get_api_key()
-        if not api_key:
-            return render_template('index.html', result="Failed to get API key", address=address)
-
-        # **Query NetDisco (MAC or IP)**
-        result = query_netdisco(address, api_key)
-        if not result:
-            return render_template('index.html', result=f"No data found for {address}", address=address)
-
-        structured_data = []
-
-        # **Check if it's an IP Lookup (Contains 'macs')**
-        if 'macs' in result and len(result['macs']) > 0:
-            mac_address = result['macs'][0]['mac']
-            sightings_result = query_netdisco(mac_address, api_key)  # Second query for sightings
-
-            for device in result['macs']:
-                structured_entry = {
-                    'ip': device.get('ip', 'N/A'),
-                    'mac': device.get('mac', 'N/A'),
-                    'manufacturer': device.get('manufacturer', {}).get('company', 'Unknown'),
-                    'time_first': device.get('time_first', 'N/A'),
-                    'time_last': device.get('time_last', 'N/A'),
-                    'device_name': 'N/A',
-                    'port': 'N/A'
-                }
-
-                if sightings_result and 'sightings' in sightings_result:
-                    for sighting in sightings_result['sightings']:
-                        if sighting['mac'] == structured_entry['mac']:
-                            clean_device_name = sighting.get('device', {}).get('name', 'N/A').replace('.DOMAIN.TLD', '')
-                            structured_entry['device_name'] = clean_device_name
-                            structured_entry['port'] = sighting.get('port', 'N/A')
-
-                structured_data.append(structured_entry)
-
-        # **Check if it's a MAC Lookup (Contains 'ips')**
-        elif 'ips' in result and len(result['ips']) > 0:
-            for device in result['ips']:
-                structured_entry = {
-                    'ip': device.get('ip', 'N/A'),
-                    'mac': device.get('mac', 'N/A'),
-                    'manufacturer': device.get('manufacturer', {}).get('company', 'Unknown'),
-                    'time_first': device.get('time_first', 'N/A'),
-                    'time_last': device.get('time_last', 'N/A'),
-                    'device_name': 'N/A',
-                    'port': 'N/A'
-                }
-
-                if 'sightings' in result and len(result['sightings']) > 0:
-                    sighting = result['sightings'][0]
-                    structured_entry['device_name'] = sighting.get('device', {}).get('name', 'N/A').replace('.DOMAIN.TLD', '')
-                    structured_entry['port'] = sighting.get('port', 'N/A')
-
-                structured_data.append(structured_entry)
-
-        print("Final Processed Data:", json.dumps(structured_data, indent=2))  # Debugging Output
-
-        return render_template('index.html', result=structured_data, address=address)
-
-    return render_template('index.html', result=None)
-
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10440, debug=True)
-#    app.run(port=10440, debug=True)
+if __name__=='__main__':
+    app.run(port=10440, debug=True)
